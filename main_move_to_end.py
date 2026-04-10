@@ -1,4 +1,4 @@
-from spike import MotorPair, DistanceSensor, ColorSensor
+from spike import MotorPair, DistanceSensor, ColorSensor, ForceSensor
 import time
 import math
 
@@ -29,11 +29,11 @@ def dir_to_str(d):
 CELL_SIZE = 25
 WHEEL_DISTANCE = 13
 
-HALF_BLOCK_DISTANCE = CELL_SIZE / 2
-TURN_90_DEGREE_AMOUNT = math.pi / 2 * (WHEEL_DISTANCE / 2)   # 약 3.93cm
+HALF_BLOCK_DISTANCE = 20
+TURN_90_DEGREE_AMOUNT = math.pi / 2 * (WHEEL_DISTANCE / 2)# 약 3.93cm
 
-OBSTACLE_MIN_DIST = 5
-OBSTACLE_MAX_DIST = 15
+OBSTACLE_MIN_DIST = 10
+OBSTACLE_MAX_DIST = 20
 
 SENSOR_TICK_COUNT = 10
 SENSOR_THRESHOLD = 0.8
@@ -41,10 +41,10 @@ SENSOR_THRESHOLD = 0.8
 GRID_ROWS = 4
 GRID_COLS = 6
 
-current_pos = (1, 1)   # 현재 위치 (Row, Col)
+current_pos = (1, 1)# 현재 위치 (Row, Col)
 current_dir = 1        # 0:북, 1:동, 2:남, 3:서
 
-at_cell_end = False
+at_cell_end = True
 
 known_obstacles = set()
 red_cells = set()
@@ -53,16 +53,21 @@ red_cells = set()
 # 2. 기본 제어 및 센서 함수
 # ==========================================
 def move_half(motor_pair, amount, speed=50, unit='cm'):
-    log("직진 시작: 거리={} {}, 속도={}".format(amount, unit, speed))
+    global at_cell_end
+    log("절반 직진 시작: 거리={} {}, 속도={}".format(amount, unit, speed))
     motor_pair.move(amount, unit, steering=0, speed=speed)
     log("직진 완료")
     at_cell_end = False
 
 def move_to_end(motor_pair, color_sensor1, color_sensor2):
-    motor_pair.start(50)
+    log("선 끝까지 직진")
+    global at_cell_end
+    motor_pair.start(0, 50)
     while True:
         if color_sensor1.get_color() == 'black' or color_sensor2.get_color() == 'black':
+            motor_pair.stop()
             at_cell_end = True
+            log("직진 완료")
             break
 
 def rotate_robot(motor_pair, amount, unit='cm', steering=100, speed=50):
@@ -77,7 +82,7 @@ def is_obstacle_confirmed(distance_sensor, min_cm, max_cm):
 
     for i in range(SENSOR_TICK_COUNT):
         dist = distance_sensor.get_distance_cm(short_range=False)
-        log("  거리센서[{}] = {}".format(i + 1, dist))
+        log("거리센서[{}] = {}".format(i + 1, dist))
 
         if dist is not None and min_cm <= dist <= max_cm:
             detect_count += 1
@@ -98,7 +103,7 @@ def is_color_confirmed(color_sensor, target_color):
 
     for i in range(SENSOR_TICK_COUNT):
         color = color_sensor.get_color()
-        log("  컬러센서[{}] = {}".format(i + 1, color))
+        log("컬러센서[{}] = {}".format(i + 1, color))
 
         if color == target_color:
             detect_count += 1
@@ -124,7 +129,7 @@ def find_bfs_path(start, goal, obstacles):
     while queue:
         path = queue.pop(0)
         node = path[-1]
-        log("  BFS 탐색 중: 현재 path={}".format(path))
+        log("BFS 탐색 중: 현재 path={}".format(path))
 
         if node == goal:
             log("BFS 성공: 경로={}".format(path))
@@ -132,10 +137,10 @@ def find_bfs_path(start, goal, obstacles):
 
         r, c = node
         neighbors = [
-            (r - 1, c),  # 북
-            (r, c + 1),  # 동
-            (r + 1, c),  # 남
-            (r, c - 1)   # 서
+            (r - 1, c),# 북
+            (r, c + 1),# 동
+            (r + 1, c),# 남
+            (r, c - 1)# 서
         ]
 
         for nr, nc in neighbors:
@@ -153,7 +158,7 @@ def find_bfs_path(start, goal, obstacles):
     return []
 
 def turn_towards(motor_pair, target_cell):
-    global current_dir, current_pos
+    global current_dir, current_pos, at_cell_end
 
     cr, cc = current_pos
     tr, tc = target_cell
@@ -163,13 +168,13 @@ def turn_towards(motor_pair, target_cell):
     ))
 
     if tr < cr:
-        target_dir = 0   # 북
+        target_dir = 0# 북
     elif tc > cc:
-        target_dir = 1   # 동
+        target_dir = 1# 동
     elif tr > cr:
-        target_dir = 2   # 남
+        target_dir = 2# 남
     elif tc < cc:
-        target_dir = 3   # 서
+        target_dir = 3# 서
     else:
         log("방향 전환 불필요: 같은 칸")
         return
@@ -178,7 +183,7 @@ def turn_towards(motor_pair, target_cell):
 
     log("목표방향={}, diff={}".format(dir_to_str(target_dir), diff))
     if diff != 0 and at_cell_end == True:
-        move_half(motor_pair, HALF_BLOCK_DISTANCE, -50)
+        move_half(motor_pair, -10)
         at_cell_end = False
     if diff == 1:
         log("우회전 90도 수행")
@@ -209,8 +214,10 @@ def sense_and_record_color(color_sensor):
 # ==========================================
 # 4. 메인 실행 함수
 # ==========================================
-def run_exploration(motor_pair, distance_sensor, color_sensor):
-    global current_pos
+def run_exploration(motor_pair, distance_sensor, color_sensor1, color_sensor2, force_sensor):
+    global current_pos, at_cell_end
+    force_sensor.wait_until_pressed()
+    time.sleep(1)
 
     log("탐색 시작")
     log("초기 상태: current_pos={}, current_dir={}".format(current_pos, dir_to_str(current_dir)))
@@ -228,7 +235,7 @@ def run_exploration(motor_pair, distance_sensor, color_sensor):
 
     log("초기 목표 큐 생성 완료: {}".format(target_queue))
 
-    sense_and_record_color(color_sensor)
+    sense_and_record_color(color_sensor1)
 
     # [탐색 페이즈]
     while target_queue:
@@ -272,7 +279,7 @@ def run_exploration(motor_pair, distance_sensor, color_sensor):
             continue
 
         log("전방 장애물 없음 -> 이동 수행")
-        move_half(motor_pair, HALF_BLOCK_DISTANCE) #move_half로 변경 필요
+        move_half(motor_pair, HALF_BLOCK_DISTANCE)
         current_pos = next_cell
         log("이동 후 현재 위치 갱신: {}".format(current_pos))
 
@@ -280,9 +287,9 @@ def run_exploration(motor_pair, distance_sensor, color_sensor):
             target_queue.remove(current_pos)
             log("도착한 칸을 목표 큐에서 제거: {}".format(current_pos))
 
-        sense_and_record_color(color_sensor)
+        sense_and_record_color(color_sensor1)
         move_to_end(motor_pair, color_sensor1, color_sensor2)
-        
+
         #control_symmetry() <- 윤태가 만든 코드
 
     # [복귀 페이즈]
@@ -323,11 +330,11 @@ def run_exploration(motor_pair, distance_sensor, color_sensor):
         if current_pos != (1, 1):
             move_to_end(motor_pair, color_sensor1, color_sensor2)
             # control_symmetry()
-        else: 
+        else:
             at_cell_end = False
             log("홈 셀 중심 도착")
-        
-        
+
+
     log("=== 미션 종료 ===")
     log("최종 분홍색 칸={}".format(sorted(list(red_cells))))
     log("최종 장애물 칸={}".format(sorted(list(known_obstacles))))
@@ -337,10 +344,11 @@ def run_exploration(motor_pair, distance_sensor, color_sensor):
 # 5. 하드웨어 초기화 및 실행
 # ==========================================
 log("하드웨어 초기화 시작")
-motor_pair = MotorPair('B', 'A')
+motor_pair = MotorPair('E', 'B')
 dist_sensor = DistanceSensor('C')
 color_sensor1 = ColorSensor('D')
-color_sensor2 = ColorSensor('E') # 값들 변경 필요
+color_sensor2 = ColorSensor('F') # 값들 변경 필요
+force_sensor = ForceSensor('A')
 log("하드웨어 초기화 완료")
 
-run_exploration(motor_pair, dist_sensor, color_sensor1, color_sensor2)
+run_exploration(motor_pair, dist_sensor, color_sensor1, color_sensor2, force_sensor)
